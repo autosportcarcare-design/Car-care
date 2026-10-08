@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Business Platform — launch</title>
+<link rel="stylesheet" href="assets/platform.css">
+<style>
+  .launch{max-width:860px;margin:0 auto;padding:28px 18px 60px}
+  .launch h1{margin:0 0 6px}
+  .launch .sub{color:var(--mute);margin:0 0 22px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin:14px 0 26px}
+  .grid a{display:block;padding:12px 14px;border:1px solid var(--line);border-radius:var(--r);background:var(--surface);text-decoration:none}
+  .grid a b{display:block;font-size:14px}
+  .grid a span{font-size:12px;color:var(--mute)}
+  .state{padding:10px 14px;border-radius:var(--r);border:1px solid var(--line);background:var(--surface);margin-bottom:18px;font-size:13px}
+</style>
+</head>
+<body>
+<div class="launch">
+  <h1>Business Platform</h1>
+  <p class="sub">Cloud accounting, inventory and workshop management — AL KHAIR AL RAAZ LLC</p>
+  <div class="state" id="state" role="status" aria-live="polite">Checking your session…</div>
+  <div class="grid" id="links"></div>
+  <p style="font-size:12.5px;color:var(--mute)">
+    This is a shortcut page. The application itself runs against PostgreSQL (Supabase) —
+    nothing here works offline and no business data is stored in this browser.
+    On iPhone, open the app and use Share → <b>Add to Home Screen</b> to install it.
+  </p>
+</div>
+<script src="assets/vendor/supabase.js"></script>
+<script src="assets/cloud.js"></script>
+<script>
+(function () {
+  var LINKS = [
+    ["dashboard.html", "Dashboard", "Today's figures"],
+    ["new-transaction.html?type=service_sale", "New service invoice", "Save &amp; post"],
+    ["job-cards.html", "Job cards", "Workshop and photos"],
+    ["day-book.html", "Day book", "Every document"],
+    ["parties.html", "Customers &amp; suppliers", "Ledgers and outstanding"],
+    ["vehicles.html", "Vehicles", "Service history"],
+    ["stock.html", "Products &amp; stock", "Stock and adjustments"],
+    ["reports.html", "Reports", "Trial balance, VAT, profit"],
+    ["document-designer.html", "Document designer", "Invoice layouts"],
+    ["settings.html", "Settings", "Company, VAT, users"],
+    ["backup.html", "Backup &amp; restore", "Download and verify"],
+    ["login.html", "Sign in / sign out", "Switch user"]
+  ];
+  document.getElementById("links").innerHTML = LINKS.map(function (l) {
+    return '<a href="' + l[0] + '"><b>' + l[1] + "</b><span>" + l[2] + "</span></a>"; }).join("");
+  var el = document.getElementById("state");
+  Cloud.sb.auth.getSession().then(function (r) {
+    var s = r.data && r.data.session;
+    el.innerHTML = s ? "Signed in as <b>" + Cloud.esc(s.user.email) + '</b>. <a href="dashboard.html">Open the dashboard →</a>'
+                     : 'Not signed in. <a href="login.html">Sign in to continue →</a>';
+  }).catch(function () { el.textContent = "Could not reach the database. Check your connection, then reload."; });
+})();
+</script>
+</body>
+</html>

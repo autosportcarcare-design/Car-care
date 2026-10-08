@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Vehicles · Business Platform</title>
+<meta name="theme-color" content="#1b2c3c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Spectral:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/platform.css">
+</head>
+<body>
+<div id="app"></div>
+<script src="assets/vendor/supabase.js"></script>
+<script src="assets/cloud.js"></script>
+<script src="assets/ui.js"></script>
+<script src="assets/pwa.js"></script>
+<script>
+UI.cloudPage("vehicles", function (ctx, view) {
+  var C = Cloud, sb = C.sb, esc = C.esc;
+  var ALL = [], CUST = [], canCreate = C.can("masters.create"), canEdit = C.can("masters.edit");
+
+  function custName(id) { var p = CUST.filter(function (c) { return c.id === id; })[0]; return p ? (p.display_name || p.name) : "—"; }
+  function title(v) { return [v.year, v.make, v.model, v.variant].filter(Boolean).join(" ") || "Vehicle"; }
+  function go(q) { history.pushState(null, "", "vehicles.html" + (q ? "?" + q : "")); route(); }
+  window.onpopstate = route;
+  function soon(d) {
+    if (!d) return "";
+    var days = Math.round((new Date(d) - new Date(new Date().toISOString().slice(0, 10))) / 864e5);
+    return days < 0 ? '<span class="due">expired</span>' : days <= 30 ? '<span class="due">in ' + days + " days</span>" : "";
+  }
+
+  async function load() {
+    var a = await sb.from("vehicles").select("*").eq("organization_id", ctx.org).order("created_at", { ascending: false }).limit(5000);
+    if (a.error) throw new Error(C.message(a.error));
+    var b = await sb.from("parties").select("id,party_code,display_name,name,party_type,status,mobile").eq("organization_id", ctx.org).in("party_type", ["customer", "both"]).order("name");
+    if (b.error) throw new Error(C.message(b.error));
+    ALL = a.data; CUST = b.data;
+  }
+
+  function list() {
+    var q = (C.query("q") || "").toLowerCase(), cust = C.query("customer"), arch = C.query("archived") === "1";
+    var rows = ALL.filter(function (v) { return arch ? v.status === "archived" : v.status !== "archived"; })
+      .filter(function (v) { return !cust || v.customer_id === cust; })
+      .filter(function (v) {
+        return !q || [v.vehicle_code, v.plate_number, v.chassis_vin, v.engine_number, v.make, v.model, v.variant, v.year, v.colour, custName(v.customer_id)]
+          .join(" ").toLowerCase().indexOf(q) >= 0;
+      });
+    view.innerHTML = UI.head("Vehicles", "Each vehicle belongs to one customer. " + ALL.length + " on file.",
+      canCreate ? '<button class="btn pri" id="add">+ Vehicle</button>' : "") +
+      '<div class="pill"><a href="vehicles.html"' + (!arch ? ' class="on"' : "") + '>Active</a><a href="vehicles.html?archived=1"' + (arch ? ' class="on"' : "") + ">Archived</a>" +
+      (cust ? '<a href="vehicles.html" class="on">Customer: ' + esc(custName(cust)) + " ✕</a>" : "") + "</div>" +
+      '<input class="searchBox" id="q" type="search" aria-label="Search vehicles" placeholder="Search plate, chassis/VIN, make, model, customer" value="' + esc(C.query("q") || "") + '" style="margin-bottom:12px">' +
+      '<div class="panel">' + (rows.length
+        ? '<div class="scroll"><table><thead><tr><th>Plate</th><th>Vehicle</th><th>Customer</th><th>Chassis / VIN</th><th class="n">Mileage</th><th>Registration</th></tr></thead><tbody>' +
+          rows.map(function (v) {
+            return '<tr class="link" data-id="' + v.id + '"><td><b>' + esc(v.plate_number || "—") + '</b> <small style="color:var(--mute)">' + esc(v.registration_emirate || "") + "</small></td>" +
+              "<td>" + esc(title(v)) + "</td><td>" + esc(custName(v.customer_id)) + "</td><td>" + esc(v.chassis_vin || "—") + "</td>" +
+              '<td class="n">' + (v.mileage != null ? Number(v.mileage).toLocaleString("en-US") : "—") + "</td><td>" + C.date(v.registration_expiry) + " " + soon(v.registration_expiry) + "</td></tr>";
+          }).join("") + "</tbody></table></div>"
+        : '<div class="empty">' + (q ? "Nothing matches that search." : "No vehicles yet.") + "</div>") + "</div>";
+    var add = document.getElementById("add"); if (add) add.onclick = function () { go("new=1" + (cust ? "&customer=" + cust : "")); };
+    view.querySelectorAll("tr[data-id]").forEach(function (tr) { tr.onclick = function () { go("id=" + tr.dataset.id); }; });
+    var qi = document.getElementById("q"), t;
+    qi.oninput = function () { clearTimeout(t); t = setTimeout(function () {
+      var u = new URLSearchParams(location.search); if (qi.value) u.set("q", qi.value); else u.delete("q");
+      history.replaceState(null, "", "vehicles.html?" + u.toString());
+      var pos = qi.selectionStart; list(); var n = document.getElementById("q"); n.focus(); n.setSelectionRange(pos, pos);
+    }, 200); };
+  }
+
+  function form(v) {
+    var isNew = !v;
+    var active = CUST.filter(function (c) { return c.status !== "archived" || (v && c.id === v.customer_id); });
+    if (!active.length) { view.innerHTML = UI.head("New vehicle", "", "") + '<div class="panel"><div class="empty">Add a customer first. <a href="parties.html?new=customer">+ Customer</a></div></div>'; return; }
+    v = v || { customer_id: C.query("customer") || "", registration_emirate: "" };
+    var FIELDS = [
+      { section: "Owner" },
+      { k: "customer_id", label: "Customer", type: "select", req: true, span: 2,
+        opts: [{ v: "", l: "Choose customer…" }].concat(active.map(function (c) { return { v: c.id, l: (c.display_name || c.name) + (c.party_code ? " · " + c.party_code : "") + (c.mobile ? " · " + c.mobile : "") }; })) },
+      { k: "vehicle_code", label: "Vehicle code", ph: "Automatic" },
+      { k: "status_note", label: "", type: "hidden" },
+      { section: "Vehicle" },
+      { k: "make", label: "Make", ph: "Toyota" },
+      { k: "model", label: "Model", ph: "Land Cruiser" },
+      { k: "variant", label: "Variant", ph: "GXR" },
+      { k: "year", label: "Year", type: "number" },
+      { k: "colour", label: "Colour" },
+      { k: "mileage", label: "Mileage (km)", type: "number", hint: "Each change is kept in mileage history" },
+      { section: "Registration" },
+      { k: "plate_number", label: "Plate number", hint: "Plate or chassis/VIN is required" },
+      { k: "registration_emirate", label: "Registration emirate", type: "select", opts: [""].concat(C.EMIRATES).concat(["Other"]) },
+      { k: "chassis_vin", label: "Chassis / VIN", span: 2 },
+      { k: "engine_number", label: "Engine number" },
+      { k: "registration_expiry", label: "Registration expiry", type: "date" },
+      { k: "insurance_provider", label: "Insurance provider" },
+      { k: "insurance_expiry", label: "Insurance expiry", type: "date" },
+      { section: "Notes" },
+      { k: "notes", label: "Notes", type: "textarea", span: 4 }
+    ];
+    view.innerHTML = UI.head(isNew ? "New vehicle" : "Edit " + (v.plate_number || v.vehicle_code), isNew ? "Saved to the database and read back before it is confirmed." : esc(v.vehicle_code), "") +
+      '<div class="panel"><form id="vf"><div class="body form">' + C.fields(FIELDS.filter(function (f) { return f.k !== "status_note"; }), v) + "</div>" +
+      '<p style="margin:0 14px 10px;font-size:11.5px;color:var(--mute)">Vehicle photos (front, rear, sides, interior, dashboard, chassis) are added with the photo module in a later phase.</p>' +
+      '<div class="formFoot"><button type="button" class="btn" id="cancel">Cancel</button><button type="submit" class="btn pri" id="save">Save</button></div></form></div>';
+    document.getElementById("cancel").onclick = function () { isNew ? go("") : go("id=" + v.id); };
+    document.getElementById("vf").onsubmit = async function (e) {
+      e.preventDefault();
+      var btn = document.getElementById("save"), data = C.collect(document.getElementById("vf"));
+      if (!data.customer_id) { C.flash("Choose the customer who owns this vehicle.", "err"); return; }
+      if (!data.plate_number && !data.chassis_vin) { C.flash("Enter the plate number or the chassis/VIN.", "err"); return; }
+      C.busy(btn, true);
+      try {
+        var saved = await C.verifiedSave("save_vehicle", { p_org: ctx.org, p_id: isNew ? null : v.id, p_data: data }, "vehicles", data, data.vehicle_code ? [] : ["vehicle_code"]);
+        await load();
+        history.replaceState(null, "", "vehicles.html?id=" + saved.id);
+        await route();
+        C.flash("Saved and verified in the database: " + saved.vehicle_code + (saved.plate_number ? " · " + saved.plate_number : ""));
+      } catch (err) { C.busy(btn, false); C.flash(C.message(err), "err"); }
+    };
+  }
+
+  function kv(pairs) {
+    return '<div class="kv">' + pairs.map(function (x) { return "<div><span>" + x[0] + "</span><b>" + (x[1] === "" || x[1] == null ? "—" : x[2] ? x[1] : esc(x[1])) + "</b></div>"; }).join("") + "</div>";
+  }
+  function table(head, rows, empty) {
+    return '<div class="panel">' + (rows.length ? '<div class="scroll"><table><thead><tr>' + head.map(function (h) {
+      return "<th" + (/Total|Mileage/.test(h) ? ' class="n"' : "") + ">" + h + "</th>"; }).join("") + "</tr></thead><tbody>" + rows.join("") + "</tbody></table></div>"
+      : '<div class="empty">' + empty + "</div>") + "</div>";
+  }
+
+  async function detail(id) {
+    var v = ALL.filter(function (x) { return x.id === id; })[0];
+    if (!v) { view.innerHTML = '<div class="panel"><div class="empty">This vehicle is not in the current company. <a href="vehicles.html">Back to list</a></div></div>'; return; }
+    var tab = C.query("tab") || "overview";
+    view.innerHTML = UI.head((v.plate_number || v.vehicle_code) + " · " + title(v),
+      esc(v.vehicle_code) + " · owner " + '<a href="parties.html?id=' + v.customer_id + '">' + esc(custName(v.customer_id)) + "</a>" + (v.status === "archived" ? ' · <span class="due">Archived</span>' : ""),
+      '<a class="btn" href="vehicles.html">List</a> ' + (canEdit ? '<button class="btn" id="arch">' + (v.status === "archived" ? "Restore" : "Archive") + '</button> <button class="btn pri" id="edit">Edit</button>' : "")) +
+      '<div class="tabs">' + [["overview", "Overview"], ["mileage", "Mileage history"], ["jobs", "Service jobs"], ["invoices", "Invoices & payments"], ["files", "Photos & files"], ["history", "History"]]
+        .map(function (t) { return '<button data-t="' + t[0] + '"' + (tab === t[0] ? ' class="on"' : "") + ">" + t[1] + "</button>"; }).join("") + "</div>" +
+      '<div id="pane"><div class="panel"><div class="empty">Loading…</div></div></div>';
+    view.querySelectorAll("[data-t]").forEach(function (b) { b.onclick = function () { history.replaceState(null, "", "vehicles.html?id=" + id + "&tab=" + b.dataset.t); detail(id); }; });
+    var ed = document.getElementById("edit"); if (ed) ed.onclick = function () { go("edit=" + id); };
+    var ar = document.getElementById("arch");
+    if (ar) ar.onclick = function () {
+      var archive = v.status !== "archived";
+      UI.confirm(archive ? "Archive this vehicle?" : "Restore this vehicle?", archive ? "It will be hidden from lists. Its history is kept." : "It will appear in lists again.", async function () {
+        try {
+          await C.rpc("set_vehicle_archived", { p_id: id, p_archived: archive });
+          var chk = await sb.from("vehicles").select("status").eq("id", id).single();
+          if (chk.error || chk.data.status !== (archive ? "archived" : "active")) throw new Error("The change could not be confirmed from the database.");
+          await load(); await detail(id); C.flash(archive ? "Archived and verified." : "Restored and verified.");
+        } catch (err) { C.flash(C.message(err), "err"); }
+      }, archive ? "Archive" : "Restore");
+    };
+    var pane = document.getElementById("pane");
+    try {
+      if (tab === "overview") {
+        pane.innerHTML = '<div class="panel"><h2>Vehicle</h2>' + kv([["Make", v.make], ["Model", v.model], ["Variant", v.variant], ["Year", v.year], ["Colour", v.colour],
+          ["Mileage", v.mileage != null ? Number(v.mileage).toLocaleString("en-US") + " km" : ""]]) + "</div>" +
+          '<div class="panel" style="margin-top:12px"><h2>Registration and insurance</h2>' + kv([["Plate", v.plate_number], ["Emirate", v.registration_emirate],
+          ["Chassis / VIN", v.chassis_vin], ["Engine no.", v.engine_number], ["Registration expiry", v.registration_expiry ? C.date(v.registration_expiry) + " " + soon(v.registration_expiry) : "", true],
+          ["Insurance", v.insurance_provider], ["Insurance expiry", v.insurance_expiry ? C.date(v.insurance_expiry) + " " + soon(v.insurance_expiry) : "", true]]) + "</div>" +
+          (v.notes ? '<div class="panel" style="margin-top:12px"><h2>Notes</h2><div class="body" style="white-space:pre-wrap">' + esc(v.notes) + "</div></div>" : "") +
+          '<p style="font-size:11.5px;color:var(--mute);margin-top:10px">Created ' + C.when(v.created_at) + " · updated " + C.when(v.updated_at) + "</p>";
+      } else if (tab === "mileage") {
+        var m = await sb.from("vehicle_mileage_history").select("*").eq("vehicle_id", id).order("recorded_at", { ascending: false });
+        if (m.error) throw m.error;
+        pane.innerHTML = table(["Recorded", "Mileage", "Source"], m.data.map(function (r) {
+          return "<tr><td>" + C.when(r.recorded_at) + '</td><td class="n">' + Number(r.mileage).toLocaleString("en-US") + "</td><td>" + esc(r.service_job_id ? "service job" : r.source) + "</td></tr>";
+        }), "No mileage recorded yet.");
+      } else if (tab === "jobs") {
+        var j = await sb.from("service_jobs").select("*").eq("organization_id", ctx.org).eq("vehicle_id", id).order("created_at", { ascending: false });
+        if (j.error) throw j.error;
+        pane.innerHTML = table(["Job", "Date", "Complaint / work", "Mileage", "Status"], j.data.map(function (r) {
+          return "<tr><td><b>" + esc(r.job_no || "Draft") + "</b></td><td>" + C.date(r.opened_date || r.created_at) + "</td><td>" + esc(r.requested_work || r.complaint || "") + "</td>" +
+            '<td class="n">' + (r.mileage != null ? Number(r.mileage).toLocaleString("en-US") : "—") + "</td><td>" + esc(String(r.status).replace(/_/g, " ")) + "</td></tr>";
+        }), "No service jobs in the database for this vehicle yet.");
+      } else if (tab === "invoices") {
+        var t = await sb.from("transactions").select("id,document_no,transaction_type,transaction_date,grand_total,paid_total,balance_total,status").eq("organization_id", ctx.org).eq("vehicle_id", id).order("transaction_date", { ascending: false });
+        if (t.error) throw t.error;
+        pane.innerHTML = table(["Number", "Date", "Type", "Total", "Paid", "Balance", "Status"], t.data.map(function (r) {
+          return "<tr><td><b>" + esc(r.document_no || "Draft") + "</b></td><td>" + C.date(r.transaction_date) + "</td><td>" + esc(r.transaction_type.replace(/_/g, " ")) + "</td>" +
+            '<td class="n">' + C.money(r.grand_total) + '</td><td class="n">' + C.money(r.paid_total) + '</td><td class="n">' + C.money(r.balance_total) + "</td><td>" + UI.tag(r.status) + "</td></tr>";
+        }), "No quotations, invoices or payments linked to this vehicle yet.");
+      } else if (tab === "files") {
+        var f = await sb.from("attachments").select("*").eq("organization_id", ctx.org).eq("vehicle_id", id).is("deleted_at", null).order("created_at", { ascending: false });
+        if (f.error) throw f.error;
+        pane.innerHTML = table(["File", "Category", "Added"], f.data.map(function (a) {
+          return "<tr><td>" + esc(a.file_name) + "</td><td>" + esc(a.category || "") + "</td><td>" + C.when(a.created_at) + "</td></tr>";
+        }), "No photos or files linked to this vehicle yet.");
+      } else if (tab === "history") {
+        var h = await C.rpc("record_history", { p_org: ctx.org, p_resource_type: "vehicle", p_resource_id: id });
+        var L = { customer_id: "Owner", plate_number: "Plate", registration_emirate: "Emirate", chassis_vin: "Chassis/VIN", make: "Make", model: "Model", variant: "Variant",
+          year: "Year", mileage: "Mileage", colour: "Colour", registration_expiry: "Registration expiry", insurance_provider: "Insurer", insurance_expiry: "Insurance expiry", status: "Status", notes: "Notes" };
+        pane.innerHTML = '<div class="panel">' + (h.length ? h.map(function (e) {
+          var ch = [];
+          if (e.previous && e.new) Object.keys(L).forEach(function (k) {
+            if (!(k in e.previous) && !(k in e.new)) return;
+            var a = e.previous[k] == null ? "" : e.previous[k], b = e.new[k] == null ? "" : e.new[k];
+            if (String(a) !== String(b)) ch.push("<li>" + L[k] + ": " + esc(k === "customer_id" ? custName(a) : a || "—") + " → " + esc(k === "customer_id" ? custName(b) : b || "—") + "</li>");
+          });
+          return '<div class="hist"><b>' + esc(e.action.replace("vehicle.", "")) + "</b> <em>" + C.when(e.at) + " · " + esc(e.actor || "") + "</em>" + (ch.length ? "<ul>" + ch.join("") + "</ul>" : "") + "</div>";
+        }).join("") : '<div class="empty">No history recorded.</div>') + "</div>";
+      }
+    } catch (err) { pane.innerHTML = '<div class="panel"><div class="empty">' + esc(C.message(err)) + "</div></div>"; }
+  }
+
+  async function route() {
+    var id = C.query("id"), edit = C.query("edit");
+    if (C.query("new")) { if (!canCreate) { C.flash("You do not have permission to add vehicles.", "err"); return list(); } return form(null); }
+    if (edit) { var v = ALL.filter(function (x) { return x.id === edit; })[0]; if (v && canEdit) return form(v); }
+    if (id) return detail(id);
+    list();
+  }
+  load().then(route).catch(function (e) { view.innerHTML = '<div class="panel"><div class="empty">' + esc(C.message(e)) + "</div></div>"; });
+});
+</script>
+</body>
+</html>

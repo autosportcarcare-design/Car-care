@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Customers & suppliers · Business Platform</title>
+<meta name="theme-color" content="#1b2c3c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Spectral:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/platform.css">
+</head>
+<body>
+<div id="app"></div>
+<script src="assets/vendor/supabase.js"></script>
+<script src="assets/cloud.js"></script>
+<script src="assets/ui.js"></script>
+<script src="assets/pwa.js"></script>
+<script>
+UI.cloudPage("parties", function (ctx, view) {
+  var C = Cloud, sb = C.sb, esc = C.esc;
+  var TYPES = [{ v: "customer", l: "Customer" }, { v: "supplier", l: "Supplier" }, { v: "both", l: "Customer and supplier" }];
+  var FIELDS = [
+    { section: "Identity" },
+    { k: "party_type", label: "Type", type: "select", opts: TYPES, req: true },
+    { k: "party_code", label: "Code", ph: "Automatic", hint: "Leave blank for the next number" },
+    { k: "display_name", label: "Display name", req: true, span: 2 },
+    { k: "legal_name", label: "Legal name (as on trade licence)", span: 2 },
+    { k: "reference_no", label: "Reference no." },
+    { k: "spr_no", label: "SPR no." },
+    { section: "Contact" },
+    { k: "contact_person", label: "Contact person", span: 2 },
+    { k: "mobile", label: "Mobile", type: "tel", ph: "+971 5x xxx xxxx" },
+    { k: "alternate_mobile", label: "Alternate mobile", type: "tel" },
+    { k: "whatsapp", label: "WhatsApp", type: "tel", hint: "Filled from mobile if left blank" },
+    { k: "telephone", label: "Telephone", type: "tel" },
+    { k: "email", label: "Email", type: "email" },
+    { k: "alternate_email", label: "Alternate email", type: "email" },
+    { section: "Address" },
+    { k: "address_line1", label: "Address line 1", span: 2 },
+    { k: "address_line2", label: "Address line 2", span: 2 },
+    { k: "area", label: "Area" },
+    { k: "city", label: "City" },
+    { k: "emirate", label: "Emirate / state", list: "emirates" },
+    { k: "postal_code", label: "P.O. Box / postal code" },
+    { k: "country", label: "Country", def: "United Arab Emirates", span: 2 },
+    { section: "Tax and credit" },
+    { k: "tax_registration_no", label: "TRN", ph: "15 digits" },
+    { k: "credit_limit", label: "Credit limit (" + (ctx.company.currency || "AED") + ")", type: "number" },
+    { k: "credit_days", label: "Credit days", type: "number" },
+    { k: "opening_balance", label: "Opening balance", type: "number" },
+    { k: "opening_balance_type", label: "Opening balance is", type: "select",
+      opts: [{ v: "", l: "—" }, { v: "debit", l: "Debit (they owe us)" }, { v: "credit", l: "Credit (we owe them)" }] },
+    { section: "Notes" },
+    { k: "notes", label: "Notes", type: "textarea", span: 4 }
+  ];
+  var ALL = [], kind = C.query("kind") || "customer";
+  var canCreate = C.can("masters.create"), canEdit = C.can("masters.edit");
+
+  function nameOf(p) { return p.display_name || p.name || p.legal_name || "—"; }
+  function go(q) { history.pushState(null, "", "parties.html" + (q ? "?" + q : "")); route(); }
+  window.onpopstate = route;
+
+  async function load() {
+    var r = await sb.from("parties").select("*").eq("organization_id", ctx.org).order("name").limit(5000);
+    if (r.error) throw new Error(C.message(r.error));
+    ALL = r.data;
+  }
+
+  /* ---------------- list ---------------- */
+  function list() {
+    kind = C.query("kind") || kind;
+    var q = (C.query("q") || "").toLowerCase();
+    var rows = ALL.filter(function (p) {
+      if (kind === "archived") return p.status === "archived";
+      if (p.status === "archived") return false;
+      return kind === "supplier" ? (p.party_type === "supplier" || p.party_type === "both") : (p.party_type !== "supplier");
+    }).filter(function (p) {
+      if (!q) return true;
+      return [p.party_code, p.display_name, p.name, p.legal_name, p.mobile, p.alternate_mobile, p.whatsapp, p.telephone, p.email,
+        p.tax_registration_no, p.spr_no, p.reference_no, p.city, p.contact_person].join(" ").toLowerCase().indexOf(q) >= 0;
+    });
+    view.innerHTML = UI.head("Customers & suppliers", "Saved in the company database. " + ALL.length + " on file.",
+      (canCreate ? '<button class="btn pri" data-new="customer">+ Customer</button> <button class="btn" data-new="supplier">+ Supplier</button>' : "")) +
+      (C.query("created") ? '<div class="note">Company created. Start by adding your first customer.</div>' : "") +
+      '<div class="pill">' + ["customer", "supplier", "archived"].map(function (k) {
+        return '<a href="#" data-k="' + k + '"' + (kind === k ? ' class="on"' : "") + ">" + { customer: "Customers", supplier: "Suppliers", archived: "Archived" }[k] + "</a>";
+      }).join("") + "</div>" +
+      '<input class="searchBox" id="q" type="search" aria-label="Search customers and suppliers" placeholder="Search name, code, mobile, WhatsApp, TRN, SPR, email" value="' + esc(C.query("q") || "") + '" style="margin-bottom:12px">' +
+      '<div class="panel">' + (rows.length
+        ? '<div class="scroll"><table><thead><tr><th>Code</th><th>Name</th><th>Mobile</th><th>TRN</th><th>City</th><th class="n">Credit days</th></tr></thead><tbody>' +
+          rows.map(function (p) {
+            return '<tr class="link" data-id="' + p.id + '"><td>' + esc(p.party_code || "—") + "</td><td><b>" + esc(nameOf(p)) + "</b>" +
+              (p.party_type === "both" ? ' <small style="color:var(--mute)">(also supplier)</small>' : "") + "</td>" +
+              "<td>" + esc(p.mobile || p.whatsapp || "—") + "</td><td>" + esc(p.tax_registration_no || "—") + "</td>" +
+              "<td>" + esc(p.city || p.emirate || "—") + '</td><td class="n">' + (p.credit_days || 0) + "</td></tr>";
+          }).join("") + "</tbody></table></div>"
+        : '<div class="empty">' + (q ? "Nothing matches that search." : kind === "archived" ? "Nothing archived." : "No " + kind + "s yet.") + "</div>") + "</div>";
+
+    view.querySelectorAll("[data-k]").forEach(function (a) { a.onclick = function (e) { e.preventDefault(); kind = a.dataset.k; go("kind=" + kind); }; });
+    view.querySelectorAll("[data-new]").forEach(function (b) { b.onclick = function () { go("new=" + b.dataset.new); }; });
+    view.querySelectorAll("tr[data-id]").forEach(function (tr) { tr.onclick = function () { go("id=" + tr.dataset.id); }; });
+    var qi = document.getElementById("q"), t;
+    qi.oninput = function () { clearTimeout(t); t = setTimeout(function () {
+      history.replaceState(null, "", "parties.html?kind=" + kind + (qi.value ? "&q=" + encodeURIComponent(qi.value) : ""));
+      var pos = qi.selectionStart; list(); var n = document.getElementById("q"); n.focus(); n.setSelectionRange(pos, pos);
+    }, 200); };
+  }
+
+  /* ---------------- form ---------------- */
+  function form(p) {
+    var isNew = !p;
+    p = p || { party_type: C.query("new") === "supplier" ? "supplier" : "customer", country: "United Arab Emirates" };
+    view.innerHTML = UI.head(isNew ? "New " + (p.party_type === "supplier" ? "supplier" : "customer") : "Edit " + nameOf(p),
+      isNew ? "Fields marked * are required. Saved to the database and read back before it is confirmed." : esc(p.party_code || ""), "") +
+      '<div class="panel"><form id="pf"><div class="body form">' + C.fields(FIELDS, p) + "</div>" +
+      '<datalist id="emirates">' + C.EMIRATES.map(function (e) { return '<option value="' + e + '">'; }).join("") + "</datalist>" +
+      '<p style="margin:0 14px 10px;font-size:11.5px;color:var(--mute)">The opening balance is kept on this record. It is posted to the ledger when accounting moves to the database.</p>' +
+      '<div class="formFoot"><button type="button" class="btn" id="cancel">Cancel</button>' +
+      '<button type="submit" class="btn pri" id="save">Save</button></div></form></div>';
+    document.getElementById("cancel").onclick = function () { isNew ? go("kind=" + kind) : go("id=" + p.id); };
+    var mob = document.getElementById("f_mobile"), wa = document.getElementById("f_whatsapp");
+    mob.onblur = function () { if (!wa.value && mob.value) wa.value = mob.value; };
+    document.getElementById("pf").onsubmit = async function (e) {
+      e.preventDefault();
+      var btn = document.getElementById("save"), data = C.collect(document.getElementById("pf"));
+      if (!data.display_name && !data.legal_name) { C.flash("Enter a display name or legal name.", "err"); return; }
+      if (data.tax_registration_no && !/^\d{15}$/.test(data.tax_registration_no.replace(/\s/g, ""))) { C.flash("TRN must be exactly 15 digits.", "err"); return; }
+      if (Number(data.opening_balance || 0) !== 0 && !data.opening_balance_type) { C.flash("Choose debit or credit for the opening balance.", "err"); return; }
+      var skip = [];
+      if (!data.party_code) skip.push("party_code");
+      if (!data.display_name) skip.push("display_name");
+      C.busy(btn, true);
+      try {
+        var saved = await C.verifiedSave("save_party", { p_org: ctx.org, p_id: isNew ? null : p.id, p_data: data }, "parties", data, skip);
+        await load();
+        history.replaceState(null, "", "parties.html?id=" + saved.id);
+        await route();
+        C.flash("Saved and verified in the database: " + (saved.party_code || nameOf(saved)));
+      } catch (err) { C.busy(btn, false); C.flash(C.message(err), "err"); }
+    };
+  }
+
+  /* ---------------- detail ---------------- */
+  async function detail(id) {
+    var p = ALL.filter(function (x) { return x.id === id; })[0];
+    if (!p) {
+      var r = await sb.from("parties").select("*").eq("id", id).eq("organization_id", ctx.org).maybeSingle();
+      p = r.data;
+    }
+    if (!p) { view.innerHTML = '<div class="panel"><div class="empty">This record is not in the current company. <a href="parties.html">Back to list</a></div></div>'; return; }
+    var tab = C.query("tab") || "overview";
+    var digits = String(p.whatsapp || p.mobile || "").replace(/\D/g, "");
+    view.innerHTML = UI.head(nameOf(p),
+      esc(p.party_code || "") + " · " + esc({ customer: "Customer", supplier: "Supplier", both: "Customer and supplier" }[p.party_type] || p.party_type) +
+      (p.status === "archived" ? ' · <span class="due">Archived</span>' : ""),
+      '<a class="btn" href="parties.html?kind=' + (p.party_type === "supplier" ? "supplier" : "customer") + '">List</a> ' +
+      (digits ? '<a class="btn" target="_blank" rel="noopener" href="https://wa.me/' + digits + '">WhatsApp</a> ' : "") +
+      (p.mobile ? '<a class="btn" href="tel:' + esc(p.mobile.replace(/\s/g, "")) + '">Call</a> ' : "") +
+      (canEdit ? '<button class="btn" id="arch">' + (p.status === "archived" ? "Restore" : "Archive") + '</button> <button class="btn pri" id="edit">Edit</button>' : "")) +
+      '<div class="tabs" id="tabs">' + [["overview", "Overview"], ["vehicles", "Vehicles"], ["transactions", "Transactions"], ["jobs", "Service jobs"], ["files", "Files"], ["history", "History"]]
+        .filter(function (t) { return t[0] !== "vehicles" || p.party_type !== "supplier"; })
+        .map(function (t) { return '<button data-t="' + t[0] + '"' + (tab === t[0] ? ' class="on"' : "") + ">" + t[1] + "</button>"; }).join("") + "</div>" +
+      '<div id="pane"><div class="panel"><div class="empty">Loading…</div></div></div>';
+    view.querySelectorAll("[data-t]").forEach(function (b) { b.onclick = function () { history.replaceState(null, "", "parties.html?id=" + id + "&tab=" + b.dataset.t); detail(id); }; });
+    var ed = document.getElementById("edit"); if (ed) ed.onclick = function () { go("edit=" + id); };
+    var ar = document.getElementById("arch");
+    if (ar) ar.onclick = function () {
+      var archive = p.status !== "archived";
+      UI.confirm(archive ? "Archive " + nameOf(p) + "?" : "Restore " + nameOf(p) + "?",
+        archive ? "Archived records are hidden from lists and pickers. History and documents are kept. You can restore it later." : "It will appear in lists again.",
+        async function () {
+          try {
+            await C.rpc("set_party_archived", { p_id: id, p_archived: archive });
+            var chk = await sb.from("parties").select("status").eq("id", id).single();
+            if (chk.error || chk.data.status !== (archive ? "archived" : "active")) throw new Error("The change could not be confirmed from the database.");
+            await load(); await detail(id); C.flash(archive ? "Archived and verified." : "Restored and verified.");
+          } catch (err) { C.flash(C.message(err), "err"); }
+        }, archive ? "Archive" : "Restore");
+    };
+    var pane = document.getElementById("pane");
+    try { pane.innerHTML = await PANES[tab](p); } catch (err) { pane.innerHTML = '<div class="panel"><div class="empty">' + esc(C.message(err)) + "</div></div>"; }
+  }
+
+  function kv(pairs) {
+    return '<div class="kv">' + pairs.map(function (x) { return "<div><span>" + x[0] + "</span><b>" + (x[1] === "" || x[1] == null ? "—" : esc(x[1])) + "</b></div>"; }).join("") + "</div>";
+  }
+  function table(head, rows, empty) {
+    return '<div class="panel">' + (rows.length ? '<div class="scroll"><table><thead><tr>' + head.map(function (h) {
+      return "<th" + (/Total|Balance|Mileage/.test(h) ? ' class="n"' : "") + ">" + h + "</th>"; }).join("") + "</tr></thead><tbody>" + rows.join("") + "</tbody></table></div>"
+      : '<div class="empty">' + empty + "</div>") + "</div>";
+  }
+  var PANES = {
+    overview: async function (p) {
+      return '<div class="panel"><h2>Contact</h2>' + kv([["Contact person", p.contact_person], ["Mobile", p.mobile], ["Alternate mobile", p.alternate_mobile],
+          ["WhatsApp", p.whatsapp], ["Telephone", p.telephone], ["Email", p.email], ["Alternate email", p.alternate_email]]) + "</div>" +
+        '<div class="panel" style="margin-top:12px"><h2>Identity and tax</h2>' + kv([["Legal name", p.legal_name], ["Reference no.", p.reference_no], ["SPR no.", p.spr_no],
+          ["TRN", p.tax_registration_no], ["Credit limit", p.credit_limit ? C.money(p.credit_limit) : ""], ["Credit days", p.credit_days],
+          ["Opening balance", p.opening_balance ? C.money(p.opening_balance) + " " + (p.opening_balance_type || "") : ""], ["Status", p.status]]) + "</div>" +
+        '<div class="panel" style="margin-top:12px"><h2>Address</h2>' + kv([["Address", [p.address_line1, p.address_line2].filter(Boolean).join(", ") || p.address],
+          ["Area", p.area], ["City", p.city], ["Emirate", p.emirate], ["P.O. Box", p.postal_code], ["Country", p.country]]) + "</div>" +
+        (p.notes ? '<div class="panel" style="margin-top:12px"><h2>Notes</h2><div class="body" style="white-space:pre-wrap">' + esc(p.notes) + "</div></div>" : "") +
+        '<p style="font-size:11.5px;color:var(--mute);margin-top:10px">Created ' + C.when(p.created_at) + (p.updated_at ? " · updated " + C.when(p.updated_at) : "") + "</p>";
+    },
+    vehicles: async function (p) {
+      var r = await sb.from("vehicles").select("*").eq("organization_id", ctx.org).eq("customer_id", p.id).order("created_at", { ascending: false });
+      if (r.error) throw r.error;
+      return (canCreate ? '<div style="margin-bottom:10px"><a class="btn pri" href="vehicles.html?new=1&customer=' + p.id + '">+ Vehicle for this customer</a></div>' : "") +
+        table(["Code", "Plate", "Vehicle", "Chassis / VIN", "Mileage", "Status"], r.data.map(function (v) {
+          return '<tr class="link" onclick="location.href=\'vehicles.html?id=' + v.id + '\'"><td>' + esc(v.vehicle_code) + "</td><td><b>" + esc(v.plate_number || "—") + "</b> " +
+            '<small style="color:var(--mute)">' + esc(v.registration_emirate || "") + "</small></td><td>" + esc([v.year, v.make, v.model, v.variant].filter(Boolean).join(" ")) + "</td>" +
+            "<td>" + esc(v.chassis_vin || "—") + '</td><td class="n">' + (v.mileage != null ? Number(v.mileage).toLocaleString("en-US") : "—") + "</td><td>" + esc(v.status) + "</td></tr>";
+        }), "No vehicles recorded for this customer.");
+    },
+    transactions: async function (p) {
+      var r = await sb.from("transactions").select("id,document_no,transaction_type,transaction_date,grand_total,balance_total,status")
+        .eq("organization_id", ctx.org).eq("party_id", p.id).order("transaction_date", { ascending: false }).limit(300);
+      if (r.error) throw r.error;
+      return table(["Number", "Date", "Type", "Total", "Balance", "Status"], r.data.map(function (t) {
+        return "<tr><td><b>" + esc(t.document_no || "Draft") + "</b></td><td>" + C.date(t.transaction_date) + "</td><td>" + esc(t.transaction_type.replace(/_/g, " ")) + "</td>" +
+          '<td class="n">' + C.money(t.grand_total) + '</td><td class="n">' + C.money(t.balance_total) + "</td><td>" + UI.tag(t.status) + "</td></tr>";
+      }), "No invoices, quotations, receipts or credit notes in the database for this party yet.");
+    },
+    jobs: async function (p) {
+      var r = await sb.from("service_jobs").select("*").eq("organization_id", ctx.org).eq("customer_id", p.id).order("created_at", { ascending: false }).limit(300);
+      if (r.error) throw r.error;
+      return table(["Job", "Date", "Work", "Status"], r.data.map(function (j) {
+        return "<tr><td><b>" + esc(j.job_no || "Draft") + "</b></td><td>" + C.date(j.opened_date || j.created_at) + "</td>" +
+          "<td>" + esc(j.requested_work || j.complaint || "") + "</td><td>" + esc(String(j.status).replace(/_/g, " ")) + "</td></tr>";
+      }), "No service jobs in the database for this customer yet.");
+    },
+    files: async function (p) {
+      var r = await sb.from("attachments").select("*").eq("organization_id", ctx.org).eq("customer_id", p.id).is("deleted_at", null).order("created_at", { ascending: false });
+      if (r.error) throw r.error;
+      return table(["File", "Category", "Type", "Added"], r.data.map(function (a) {
+        return "<tr><td>" + esc(a.file_name) + "</td><td>" + esc(a.category || "") + "</td><td>" + esc(a.mime_type || "") + "</td><td>" + C.when(a.created_at) + "</td></tr>";
+      }), "No photos or files linked to this record yet.");
+    },
+    history: async function (p) {
+      var h = await C.rpc("record_history", { p_org: ctx.org, p_resource_type: "party", p_resource_id: p.id });
+      var LABEL = { party_code: "Code", display_name: "Display name", legal_name: "Legal name", mobile: "Mobile", whatsapp: "WhatsApp", email: "Email",
+        tax_registration_no: "TRN", credit_limit: "Credit limit", credit_days: "Credit days", status: "Status", emirate: "Emirate", city: "City",
+        address_line1: "Address", contact_person: "Contact person", party_type: "Type", opening_balance: "Opening balance", spr_no: "SPR", reference_no: "Reference", notes: "Notes" };
+      return '<div class="panel">' + (h.length ? h.map(function (e) {
+        var changes = [];
+        if (e.previous && e.new) Object.keys(LABEL).forEach(function (k) {
+          if (!(k in e.previous) && !(k in e.new)) return;
+          if (String(e.previous[k] == null ? "" : e.previous[k]) !== String(e.new[k] == null ? "" : e.new[k]))
+            changes.push("<li>" + LABEL[k] + ": " + esc(e.previous[k] == null ? "—" : e.previous[k]) + " → " + esc(e.new[k] == null ? "—" : e.new[k]) + "</li>");
+        });
+        return '<div class="hist"><b>' + esc(e.action.replace("party.", "")) + "</b> <em>" + C.when(e.at) + " · " + esc(e.actor || "") + "</em>" +
+          (changes.length ? "<ul>" + changes.join("") + "</ul>" : "") + "</div>";
+      }).join("") : '<div class="empty">No history recorded.</div>') + "</div>";
+    }
+  };
+
+  /* ---------------- router ---------------- */
+  async function route() {
+    var id = C.query("id"), edit = C.query("edit"), isNew = C.query("new");
+    if (isNew) { if (!canCreate) { C.flash("You do not have permission to create customers or suppliers.", "err"); return list(); } return form(null); }
+    if (edit) { var p = ALL.filter(function (x) { return x.id === edit; })[0]; if (p && canEdit) return form(p); }
+    if (id) return detail(id);
+    list();
+  }
+
+  load().then(route).catch(function (e) {
+    view.innerHTML = '<div class="panel"><div class="empty">' + esc(C.message(e)) + "</div></div>";
+  });
+});
+</script>
+</body>
+</html>

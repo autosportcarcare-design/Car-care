@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Companies · Business Platform</title>
+<meta name="theme-color" content="#1b2c3c">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Spectral:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/platform.css">
+</head>
+<body>
+<div id="app"><div class="gate"><div class="gateCard"><p class="sub">Loading…</p></div></div></div>
+<script src="assets/vendor/supabase.js"></script>
+<script src="assets/cloud.js"></script>
+<script src="assets/pwa.js"></script>
+<script>
+(async function () {
+  var app = document.getElementById("app");
+  var user = await Cloud.user();
+  if (!user) { location.replace("login.html?next=setup.html"); return; }
+  var list = [];
+  try { list = await Cloud.companies(); } catch (e) { list = []; }
+  var current = localStorage.getItem("bp.company");
+
+  function draw(msg, kind) {
+    app.innerHTML =
+      '<div class="gate"><div class="gateCard">' +
+        "<h1>" + (list.length ? "Choose a company" : "Create your company") + "</h1>" +
+        '<p class="sub">Signed in as ' + Cloud.esc(user.email) + ". " +
+          (list.length ? "Each company keeps its own customers, stock, books and numbering." : "Your account is not part of any company yet.") + "</p>" +
+        (msg ? '<div class="note' + (kind === "err" ? " deny" : "") + '">' + Cloud.esc(msg) + "</div>" : "") +
+        (list.length ? '<div class="coList">' + list.map(function (c) {
+          return '<button class="btn" data-co="' + c.id + '"' + (c.id === current ? ' style="box-shadow:inset 3px 0 var(--brass)"' : "") + ">" +
+            "<b>" + Cloud.esc(c.name) + '</b><br><small style="color:var(--mute)">' + Cloud.esc(c.role) + " · " + Cloud.esc(c.currency || "") + "</small></button>";
+        }).join("") + "</div>" : "") +
+        '<form id="f"><h2 class="formSec" style="margin-top:0">' + (list.length ? "Add another company" : "Company details") + "</h2>" +
+          '<label class="field"><span>Company name *</span><input id="nm" required maxlength="160" placeholder="As it should appear on documents"></label>' +
+          '<label class="field"><span>Base currency</span><input id="cur" value="AED" maxlength="3" style="text-transform:uppercase"></label>' +
+          '<p style="font-size:12px;color:var(--mute);margin:0 0 12px">You become the Owner. Legal name, TRN, VAT and logo are entered in Settings; nothing is filled in for you.</p>' +
+          '<button class="btn pri" id="go" type="submit" style="width:100%">Create company</button>' +
+        "</form>" +
+        '<p style="margin:14px 0 0;font-size:12px;text-align:center"><a href="login.html?logout=1">Sign out</a></p>' +
+      "</div></div>";
+
+    Array.prototype.forEach.call(app.querySelectorAll("[data-co]"), function (b) {
+      b.onclick = async function () {
+        await Cloud.setCompany(b.getAttribute("data-co"), true);
+        location.replace("parties.html");
+      };
+    });
+    document.getElementById("f").onsubmit = async function (e) {
+      e.preventDefault();
+      var go = document.getElementById("go");
+      var name = document.getElementById("nm").value.trim(), cur = document.getElementById("cur").value.trim().toUpperCase();
+      if (!/^[A-Z]{3}$/.test(cur)) { draw("Currency must be a 3-letter code such as AED.", "err"); return; }
+      Cloud.busy(go, true, "Creating…");
+      try {
+        var id = await Cloud.rpc("create_organization", { p_name: name, p_currency: cur });
+        /* verify: read the company list back from the database */
+        list = await Cloud.companies();
+        var made = list.filter(function (c) { return c.id === id; })[0];
+        if (!made || made.role !== "Owner" || made.currency !== cur) throw new Error("The company could not be confirmed in the database. Please refresh before trying again.");
+        await Cloud.setCompany(id);
+        try { await Cloud.rpc("log_session_event", { p_org: id, p_action: "auth.login" }); } catch (x) {}
+        location.replace("parties.html?created=1");
+      } catch (err) { draw(Cloud.message(err), "err"); }
+    };
+  }
+  draw();
+})();
+</script>
+</body>
+</html>
