@@ -1,0 +1,6 @@
+{
+  "_comment": "Values used by assets/cloud.js. The publishable key is public by design and safe in the browser; row-level security decides what it can reach. NEVER put a service-role key, database password or SMTP password in this file or anywhere in the web app.",
+  "SUPABASE_URL": "https://YOUR-PROJECT-REF.supabase.co",
+  "SUPABASE_PUBLISHABLE_KEY": "sb_publishable_xxxxxxxxxxxxxxxxxxxxxxxx",
+  "STORAGE_BUCKET": "business-media"
+}

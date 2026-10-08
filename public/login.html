@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Sign in · Business Platform</title>
+<meta name="theme-color" content="#1b2c3c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Spectral:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/platform.css">
+</head>
+<body>
+<div id="app"><div class="gate"><div class="gateCard"><p class="sub">Loading…</p></div></div></div>
+<script src="assets/vendor/supabase.js"></script>
+<script src="assets/cloud.js"></script>
+<script src="assets/pwa.js"></script>
+<script>
+(async function () {
+  var app = document.getElementById("app");
+  var mode = Cloud.query("mode") || "signin";
+  var next = Cloud.query("next");
+
+  if (Cloud.query("logout")) {
+    try { await Cloud.signOut(); } catch (e) {}
+    try { localStorage.removeItem("mbp.session.v1"); sessionStorage.removeItem("mbp.session.v1"); } catch (e) {}
+    history.replaceState(null, "", "login.html");
+  }
+
+  async function afterSignIn() {
+    var list = await Cloud.companies();
+    if (!list.length) { location.replace("setup.html"); return; }
+    var saved = localStorage.getItem("bp.company");
+    var co = list.filter(function (c) { return c.id === saved; })[0] || list[0];
+    await Cloud.setCompany(co.id);
+    try { await Cloud.rpc("log_session_event", { p_org: co.id, p_action: "auth.login" }); } catch (e) {}
+    if (list.length > 1 && !saved) { location.replace("setup.html"); return; }
+    location.replace(next && /^[\w\-.]+\.html(\?.*)?$/.test(next) ? next : "parties.html");
+  }
+
+  /* Already signed in (and not resetting a password)? Go straight in. */
+  if (mode !== "newpass" && await Cloud.user()) { try { await afterSignIn(); return; } catch (e) {} }
+
+  function draw(msg, kind) {
+    var t = {
+      signin: ["Sign in", "Use the email and password for your company account."],
+      signup: ["Create account", "One account can own or join several companies."],
+      reset: ["Reset password", "We will email you a link to choose a new password."],
+      newpass: ["Choose a new password", "Enter the new password for your account."]
+    }[mode];
+    app.innerHTML =
+      '<div class="gate"><div class="gateCard">' +
+        "<h1>" + t[0] + '</h1><p class="sub">' + t[1] + "</p>" +
+        (mode === "newpass" ? "" :
+          '<div class="authTabs"><button class="btn' + (mode === "signin" ? " on" : "") + '" data-m="signin">Sign in</button>' +
+          '<button class="btn' + (mode === "signup" ? " on" : "") + '" data-m="signup">Create account</button></div>') +
+        (msg ? '<div class="note' + (kind === "err" ? " deny" : "") + '">' + Cloud.esc(msg) + "</div>" : "") +
+        '<form id="f" autocomplete="on">' +
+          (mode !== "newpass" ? '<label class="field"><span>Email</span><input id="em" type="email" autocomplete="username" required inputmode="email"></label>' : "") +
+          (mode !== "reset" ? '<label class="field"><span>Password</span><input id="pw" type="password" autocomplete="' +
+            (mode === "signin" ? "current-password" : "new-password") + '" required minlength="8"></label>' : "") +
+          (mode === "signup" || mode === "newpass" ? '<label class="field"><span>Confirm password</span><input id="pw2" type="password" autocomplete="new-password" required minlength="8"></label>' : "") +
+          '<button class="btn pri" id="go" type="submit" style="width:100%">' + t[0] + "</button>" +
+        "</form>" +
+        (mode === "signin" ? '<p style="margin:14px 0 0;font-size:12px;text-align:center"><a href="#" data-m="reset">Forgot password?</a></p>' : "") +
+        (mode === "reset" ? '<p style="margin:14px 0 0;font-size:12px;text-align:center"><a href="#" data-m="signin">Back to sign in</a></p>' : "") +
+      "</div></div>";
+
+    Array.prototype.forEach.call(app.querySelectorAll("[data-m]"), function (b) {
+      b.onclick = function (e) { e.preventDefault(); mode = b.getAttribute("data-m"); draw(); };
+    });
+    document.getElementById("f").onsubmit = async function (e) {
+      e.preventDefault();
+      var go = document.getElementById("go");
+      var em = document.getElementById("em"), pw = document.getElementById("pw"), pw2 = document.getElementById("pw2");
+      if (pw2 && pw.value !== pw2.value) { draw("The two passwords do not match.", "err"); return; }
+      Cloud.busy(go, true, "Please wait…");
+      try {
+        if (mode === "signin") { await Cloud.signIn(em.value.trim(), pw.value); await afterSignIn(); }
+        else if (mode === "signup") {
+          var r = await Cloud.signUp(em.value.trim(), pw.value);
+          if (r.needsConfirmation) { mode = "signin"; draw("Account created. Open the confirmation link sent to " + em.value.trim() + ", then sign in here."); }
+          else await afterSignIn();
+        } else if (mode === "reset") { await Cloud.resetPassword(em.value.trim()); mode = "signin"; draw("If that email has an account, a reset link is on its way."); }
+        else if (mode === "newpass") { await Cloud.setNewPassword(pw.value); await afterSignIn(); }
+      } catch (err) { draw(Cloud.message(err), "err"); }
+    };
+  }
+  draw();
+})();
+</script>
+</body>
+</html>

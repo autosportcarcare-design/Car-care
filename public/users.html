@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Users & roles · Business Platform</title>
+<meta name="theme-color" content="#1b2c3c">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Spectral:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/platform.css">
+</head>
+<body>
+<div id="app"></div>
+<script src="assets/vendor/supabase.js"></script>
+<script src="assets/cloud.js"></script>
+<script src="assets/ui.js"></script>
+<script src="assets/pwa.js"></script>
+<script>
+UI.cloudPage("users", function (ctx, view) {
+  var C = Cloud, esc = C.esc, admin = C.can("organization.admin");
+  var members = [], R = { roles: [], catalog: [] }, tab = C.query("tab") || "members";
+
+  async function load() {
+    members = await C.rpc("company_members", { p_org: ctx.org });
+    R = await C.rpc("company_roles", { p_org: ctx.org });
+  }
+  function roleOpts(sel, excludeOwner) {
+    return R.roles.filter(function (r) { return !excludeOwner || r.name !== "Owner"; }).map(function (r) {
+      return '<option value="' + r.id + '"' + (r.id === sel ? " selected" : "") + ">" + esc(r.name) + "</option>"; }).join("");
+  }
+
+  function draw() {
+    view.innerHTML = UI.head("Users & roles", "Who can use " + esc(ctx.company.name) + ", and what each role may do. Checked on the server for every action.", "") +
+      '<div class="tabs"><button data-t="members"' + (tab === "members" ? ' class="on"' : "") + ">Members</button>" +
+      '<button data-t="roles"' + (tab === "roles" ? ' class="on"' : "") + ">Roles & permissions</button></div>" +
+      (tab === "members" ? membersPane() : rolesPane());
+    view.querySelectorAll("[data-t]").forEach(function (b) { b.onclick = function () { tab = b.dataset.t; history.replaceState(null, "", "users.html?tab=" + tab); draw(); }; });
+    wire();
+  }
+
+  function membersPane() {
+    return (admin ? '<div class="panel" style="margin-bottom:12px"><h2>Add a member</h2><form id="addf" class="body form">' +
+        '<label class="field span2"><span>Email of an existing account</span><input id="aem" type="email" required placeholder="They must create an account first"></label>' +
+        '<label class="field"><span>Role</span><select id="arole">' + roleOpts(null, true) + "</select></label>" +
+        '<div class="field" style="align-self:end"><button class="btn pri" id="abtn" type="submit" style="width:100%">Add member</button></div></form></div>' : "") +
+      '<div class="panel"><div class="scroll"><table><thead><tr><th>Email</th><th>Role</th><th>Status</th><th>Member since</th>' + (admin ? "<th></th>" : "") + "</tr></thead><tbody>" +
+      members.map(function (m) {
+        return "<tr><td><b>" + esc(m.email || m.user_id) + "</b>" + (m.me ? ' <small style="color:var(--mute)">(you)</small>' : "") + "</td>" +
+          "<td>" + (admin ? '<select aria-label="Role for ' + esc(m.email || m.user_id) + '" data-role="' + m.user_id + '">' + roleOpts(m.role_id) + "</select>" : esc(m.role)) + "</td>" +
+          "<td>" + (admin ? '<select aria-label="Status for ' + esc(m.email || m.user_id) + '" data-status="' + m.user_id + '"><option value="active"' + (m.status === "active" ? " selected" : "") + ">Active</option>" +
+            '<option value="suspended"' + (m.status === "suspended" ? " selected" : "") + ">Suspended</option></select>" : esc(m.status)) + "</td>" +
+          "<td>" + C.date(m.since) + "</td>" + (admin ? '<td><button class="btn sm" data-save="' + m.user_id + '">Save</button></td>' : "") + "</tr>";
+      }).join("") + "</tbody></table></div></div>";
+  }
+
+  function rolesPane() {
+    var cols = R.roles;
+    return (admin ? '<form id="rolef" style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap"><input id="rname" aria-label="New custom role name" placeholder="New custom role name" style="max-width:260px">' +
+        '<button class="btn" type="submit">+ Custom role</button></form>' : "") +
+      '<div class="panel"><div class="scroll"><table><thead><tr><th>Permission</th>' + cols.map(function (r) { return '<th style="text-align:center">' + esc(r.name) + "</th>"; }).join("") + "</tr></thead><tbody>" +
+      R.catalog.filter(function (p) { return p.key !== "transaction.approve"; }).map(function (p) {
+        return "<tr><td>" + esc(p.label) + ' <small style="color:var(--mute)">' + esc(p.key) + "</small></td>" + cols.map(function (r) {
+          var on = r.permissions.indexOf(p.key) >= 0;
+          return '<td style="text-align:center"><input type="checkbox" style="width:auto" data-rp="' + r.id + "|" + p.key + '"' + (on ? " checked" : "") +
+            (!admin || r.name === "Owner" ? " disabled" : "") + "></td>";
+        }).join("") + "</tr>";
+      }).join("") + "</tbody></table></div></div>" +
+      '<p style="font-size:12px;color:var(--mute)">Post is a security permission, not an approval step: anyone holding it can Save &amp; Post. The Owner role always has everything.</p>';
+  }
+
+  function wire() {
+    var af = document.getElementById("addf");
+    if (af) af.onsubmit = async function (e) {
+      e.preventDefault(); var b = document.getElementById("abtn"), em = document.getElementById("aem").value.trim();
+      C.busy(b, true, "Adding…");
+      try {
+        await C.rpc("add_member_by_email", { p_org: ctx.org, p_email: em, p_role: document.getElementById("arole").value });
+        await load();
+        if (!members.some(function (m) { return (m.email || "").toLowerCase() === em.toLowerCase() && m.status === "active"; })) throw new Error("The member could not be confirmed in the database.");
+        draw(); C.flash("Added and verified: " + em);
+      } catch (err) { C.busy(b, false); C.flash(C.message(err), "err"); }
+    };
+    view.querySelectorAll("[data-save]").forEach(function (b) {
+      b.onclick = async function () {
+        var uid = b.dataset.save, role = view.querySelector('[data-role="' + uid + '"]').value, st = view.querySelector('[data-status="' + uid + '"]').value;
+        C.busy(b, true, "…");
+        try {
+          await C.rpc("set_member_role", { p_org: ctx.org, p_user: uid, p_role: role, p_status: st });
+          await load();
+          var m = members.filter(function (x) { return x.user_id === uid; })[0];
+          if (!m || m.role_id !== role || m.status !== st) throw new Error("The change could not be confirmed in the database.");
+          draw(); C.flash("Member updated and verified.");
+        } catch (err) { C.busy(b, false); C.flash(C.message(err), "err"); await load(); draw(); }
+      };
+    });
+    view.querySelectorAll("[data-rp]").forEach(function (cb) {
+      cb.onchange = async function () {
+        var parts = cb.dataset.rp.split("|"); cb.disabled = true;
+        try {
+          var now = await C.rpc("set_role_permission", { p_org: ctx.org, p_role: parts[0], p_permission: parts[1], p_on: cb.checked });
+          if (now !== cb.checked) throw new Error("The change could not be confirmed in the database.");
+          await load(); C.flash("Permission " + (cb.checked ? "granted" : "removed") + " and verified.");
+        } catch (err) { cb.checked = !cb.checked; C.flash(C.message(err), "err"); }
+        cb.disabled = false;
+      };
+    });
+    var rf = document.getElementById("rolef");
+    if (rf) rf.onsubmit = async function (e) {
+      e.preventDefault(); var n = document.getElementById("rname").value.trim();
+      try { await C.rpc("create_role", { p_org: ctx.org, p_name: n }); await load();
+        if (!R.roles.some(function (r) { return r.name === n; })) throw new Error("The role could not be confirmed in the database.");
+        draw(); C.flash("Role created and verified: " + n);
+      } catch (err) { C.flash(C.message(err), "err"); }
+    };
+  }
+
+  load().then(draw).catch(function (e) { view.innerHTML = '<div class="panel"><div class="empty">' + esc(C.message(e)) + "</div></div>"; });
+});
+</script>
+</body>
+</html>

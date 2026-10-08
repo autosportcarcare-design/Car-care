@@ -1,0 +1,36 @@
+{
+  "name": "Business Platform",
+  "short_name": "Platform",
+  "start_url": "./dashboard.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#eef2f6",
+  "theme_color": "#1b2c3c",
+  "icons": [
+    {
+      "src": "./assets/app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "description": "Cloud accounting, inventory and workshop management for UAE automotive businesses.",
+  "shortcuts": [
+    {
+      "name": "New service invoice",
+      "url": "./new-transaction.html?type=service_sale"
+    },
+    {
+      "name": "New job card",
+      "url": "./job-cards.html?new=1"
+    },
+    {
+      "name": "New customer",
+      "url": "./parties.html?new=customer"
+    },
+    {
+      "name": "Day book",
+      "url": "./day-book.html"
+    }
+  ]
+}
